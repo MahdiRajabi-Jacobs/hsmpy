@@ -1,9 +1,9 @@
 #HSMPY3
 # Developed By Mahdi Rajabi mrajabi@clemson.edu
-import os
-import sys
-import datetime
-import json
+#import os
+#import sys
+#import datetime
+#import json
 # import arcpy
 import pandas as pd
 import numpy as np
@@ -11,12 +11,13 @@ import numpy as np
 # import re
 from time import gmtime, strftime
 # import matplotlib.pyplot as plt
-from hsmpy31 import common
-from hsmpy31 import gdb
+#from hsmpy import common
+from hsmpy import gdb
 
 
 def PolylineToDF(pl):
     import arcpy
+    import pandas as pd
     sr = pl.spatialReference
     df = pd.DataFrame(columns=['PartNumber','BMP','EMP','Mileage','Shape'])
     for i,prt in enumerate(pl):
@@ -38,6 +39,8 @@ def PolylineToDF(pl):
     df['Dist_To_NextPart'] = df.Dist_To_NextPart.fillna(0)
     return(df[['PartNumber','BMP','EMP','Mileage','Shape','Dist_To_NextPart']])
 def UnsplitParts(df,Tolerance,SpatRef):
+    import numpy as np
+    from hsmpy import common
     df.index = np.arange(0, len(df) )
     df['FP'] = [s[0] for s in df.Shape]
     df['LP'] = [s[-1] for s in df.Shape]
@@ -48,7 +51,7 @@ def UnsplitParts(df,Tolerance,SpatRef):
         if i==df.shape[0]-1:
             continue
         if r.EMP==df.loc[i+1]['BMP']:
-            d = hsmpy3.common.Distance(x1=r.LP.X,y1=r.LP.Y,x2=df.loc[i+1]['FP'].X,y2=df.loc[i+1]['FP'].Y)
+            d = common.Distance(x1=r.LP.X,y1=r.LP.Y,x2=df.loc[i+1]['FP'].X,y2=df.loc[i+1]['FP'].Y)
             df.set_value(i,'Spread',d)
             if d<Tolerance:
                 df.set_value(i,'Continuous',1)
@@ -114,13 +117,14 @@ def MergeOverlappingParts(df):
         mdf.loc[m] = [M[0],M[-1],prt]
     return(mdf)
 def ParttoDF(prt):
+    import pandas as pd
     df = pd.DataFrame(columns=['ID','X','Y','Z','M'])
     for i,pnt in enumerate(prt):
         df.loc[i] = [i,pnt.X,pnt.Y,pnt.Z,pnt.M]
     return(df)
 def CreateRoutes(Input,RID,BMP,EMP,SpatRef,Tolerance,Output):
-    from hsmpy31 import common
-    from hsmpy31 import gdb
+    from hsmpy import common
+    from hsmpy import gdb
     import arcpy
     print('[{}] {} to pandas:'.format(strftime("%Y-%m-%d %H:%M:%S"),os.path.basename(Input)))
     df  = gdb.FCtoDF_cursor(Input,readGeometry=True,selectedFields=[RID,BMP,EMP])
@@ -276,7 +280,7 @@ def CreateRoutes(Input,RID,BMP,EMP,SpatRef,Tolerance,Output):
 
     return(Output)
 def CompassFromShapefile(RoutesFC,RID_Field,CSV_Out):
-    from hsmpy31 import common
+    from hsmpy import common
     import arcpy
     import math
     def degToCompass(num):
@@ -325,44 +329,50 @@ def CompassFromShapefile(RoutesFC,RID_Field,CSV_Out):
     df.reset_index(drop=True,inplace=True)
     df.to_csv(CSV_Out,index=False)
     print('[{}] done!'.format(strftime("%Y-%m-%d %H:%M:%S")))
-def DissolveDF(DF,RID,BMP,EMP,STIM,ETIM,DissFields):
-    print('[{}] dissolving by milepost: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),DissFields))
-    print('[{}] sorting and indexing:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+def DissolveDF(DF,DissFields,RID='RID',BMP='BMP',EMP='EMP',STIM='STIM',ETIM='ETIM'):
+    from time import gmtime, strftime
+    import pandas as pd
+    import numpy as np
+    #print('[{}] dissolving by milepost: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),DissFields))
+    #print('[{}] sorting and indexing:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     F1 = [RID,STIM,ETIM,BMP,EMP]
     F2 = DissFields
     df = DF[F1+F2]
     df.index = range(0,df.shape[0])
     df = df.sort_values(by=[RID,STIM])
     df = df.fillna(-1)
-    print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),df.shape))
-    print('[{}] grouping intervals:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),df.shape))
+    #print('[{}] grouping intervals:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     idx = df.groupby([RID,STIM,ETIM] + F2)[BMP].shift(-1) != df[EMP]
     df['EMP2'] = df.loc[idx, EMP]
     df['EMP2'] = df.groupby([RID,STIM,ETIM] + F2)['EMP2'].fillna(method='backfill')
     df['EMP2'] = df['EMP2'].fillna(df[EMP]) 
-    print('[{}] aggregating groups:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] aggregating groups:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     sdf = df.groupby([RID,STIM,ETIM] + F2 + ['EMP2'], as_index=False).agg({BMP: 'first', EMP: 'last'}).drop(['EMP2'], axis=1)
-    print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),sdf.shape))
+    #print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),sdf.shape))
 
-    print('[{}] dissolving by time:'.format(strftime("%Y-%m-%d %H:%M:%S")))
-    print('[{}] sorting and indexing:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] dissolving by time:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] sorting and indexing:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     df = sdf
     df.index = range(0,df.shape[0])
     df = df.sort_values(by=[RID,BMP])
-    print('[{}] grouping intervals:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] grouping intervals:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     idx = df.groupby([RID,BMP,EMP] + F2)[STIM].shift(-1) != df[ETIM]
     df['EMP2'] = df.loc[idx, ETIM]
     df['EMP2'] = df.groupby([RID,BMP,EMP] + F2)['EMP2'].fillna(method='backfill')
     df['EMP2'] = df['EMP2'].fillna(df[ETIM]) 
-    print('[{}] aggregating groups:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] aggregating groups:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     sdf = df.groupby([RID,BMP,EMP] + F2 + ['EMP2'], as_index=False).agg({STIM: 'first', ETIM: 'last'}).drop(['EMP2'], axis=1)
-    print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),sdf.shape))
-    print('[{}] sorting the output:'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}]  - {}:'.format(strftime("%Y-%m-%d %H:%M:%S"),sdf.shape))
+    #print('[{}] sorting the output:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     sdf = sdf.replace(-1,np.NaN)
     sdf = sdf[F1+F2].sort_values(F1)
-    print('[{}] done!'.format(strftime("%Y-%m-%d %H:%M:%S")))
+    #print('[{}] done!'.format(strftime("%Y-%m-%d %H:%M:%S")))
     return(sdf)
 def DissolveDF_MP(DF,DissFields,RID='RID',YEAR='YEAR',BMP='BMP',EMP='EMP'):
+    from time import gmtime, strftime
+    import pandas as pd
+
     print('[{}] dissolving by milepost: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),DissFields))
     print('[{}] sorting and indexing:'.format(strftime("%Y-%m-%d %H:%M:%S")))
     F1 = [RID,YEAR,BMP,EMP]
@@ -426,6 +436,11 @@ def OverlapLinearEvents(Source_DF,Target_DF,AttList):
     return(Target_DF)
 
 def OverlayRouteEvents(DF_List,Field_List,GDB,Type='UNION'):
+    """
+    field list should have the same number of elements as the DF List
+    each element in field list is in the format of "RID BMP EMP"
+    example: [df1,df2],["RID BMP EMP', "RID BMP EMP"]
+    """
     import arcpy
     ts = strftime("%Y%m%d_%H%M%S")
 
@@ -480,6 +495,7 @@ def OverlayRouteEvents(DF_List,Field_List,GDB,Type='UNION'):
     return(Out_DF)
 
 def GetCIDs(roads,crashes):
+    import sys
     p = r'\\Chcfpp01\Groups\HTS\Code_Repository\Python\Libraries'
     if not p in sys.path:
         sys.path.append(p)
@@ -494,6 +510,7 @@ def GetCIDs(roads,crashes):
     return(roads.apply(GetCID,axis=1))
 def GetRoadAtt(roads,crashes,fields):
     import pandas as pd
+    import numpy as np
     from htspy.linref.events import NetworkEventsCollection
     nec = NetworkEventsCollection(roads, rid_col='RID', year_col='YEAR', beg_col='BMP',end_col='EMP')
     def GetCID(r):
@@ -648,6 +665,7 @@ def SimplifyByCurves(Input_FC,max_offset=12,min_radius=80,max_radius=10000,min_a
     return(CDF)
 def SimplifyByCurves_DF(Input_DF,GDB,max_offset=12,min_radius=80,max_radius=10000,min_arc_angle=1,fit_to_segment=False,max_arc_angle_step=50,anchor_points=''):
 
+
     import arcpy
     import math
     def define_circle(p1, p2, p3):
@@ -790,3 +808,84 @@ def SimplifyByCurves_DF(Input_DF,GDB,max_offset=12,min_radius=80,max_radius=1000
     CDF = CDF.sort_values(['RID','BMP'])
     t_print('done!')
     return(CDF)
+
+# def CreateSlidingWindow(Input_Seg):
+    """
+    Input Segment is a pandas dataframe with RID, BMP, EMP, Increment, and Span as required fields plus any other optional fields.
+    The output will be the sliding window dataframe with RID, Reporting Interval Segment ID, Window Segment ID, and Input Segment ID plus all other optional fields.
+    All mileposts are rounded to 3 decimals.
+    """
+    sdf = Input_Seg.copy(deep=True)
+    fields = [c for c in list(Input_Seg) if not c in ['SID','RID','BMP','EMP']]
+    sdf['Input_SID'] = sdf.RID + '_' + sdf.BMP.apply(lambda x:'{:0.3f}'.format(x)) + '_' + sdf.EMP.apply(lambda x:'{:0.3f}'.format(x))
+    sdf['SID'] = sdf['Input_SID']
+    
+    def CreateIntervals(row):
+        n = 0
+        if row.EMP-row.BMP>row.Increment:
+            n = int(float(row.EMP-row.BMP-row.Increment)/row.Increment)
+        BMPList = [row.BMP + i*row.Increment for i in range(0,n+1)]
+        df = pd.DataFrame(columns = ['BMP','EMP'])
+        for i,bmp in enumerate(BMPList):
+            if bmp+row.Increment <= row.EMP:
+                df.loc[i] = [bmp,bmp+row.Increment]
+            else:
+                df.loc[i] = [bmp,row.EMP]
+        Max_EMP = df.EMP.max()
+        if Max_EMP<row.EMP:
+            df.loc[i+1] = [Max_EMP,row.EMP]
+        df.BMP = df.BMP.round(3)
+        df.EMP = df.EMP.round(3)
+        ints = [pd.Interval(left=r.BMP,right=r.EMP,closed='left') for i,r in df.iterrows()]
+        if ints[-1].left - ints[-1].right<row.Increment:
+            i = pd.Interval(left=np.round(ints[-1].right - row.Increment,3),right=np.round(ints[-1].right,3),closed='left')
+            ints = ints[:-1]
+            ints.append(i)
+        return(pd.IntervalIndex(ints))
+    sdf['Intervals'] = sdf.apply(CreateIntervals,axis=1)
+    
+    SW_DF = pd.DataFrame(index=pd.MultiIndex.from_arrays([[i for i,r in sdf.iterrows() for n in r.Intervals],[n for i,r in sdf.iterrows() for n in r.Intervals]],
+                                                         names=['Index','Interval'])).reset_index(level=1)
+    for c in list(sdf):
+        if not c in ['Intervals','BMP','EMP']:
+            SW_DF[c] = sdf[c].reindex(SW_DF.index)
+    SW_DF['BMP'] = SW_DF.Interval.apply(lambda x:max([0,x.left]))
+    SW_DF['EMP'] = SW_DF.Interval.apply(lambda x:x.right)
+
+    def RollingIntervals(df):
+        span = df.Span.iloc[0]
+        n = df.shape[0]
+        idf = pd.DataFrame(index=range(n))
+        idf['Shift'] =  int(span/2)
+        for i in range(int(span/2)):
+            idf.loc[i,'Shift'] = i
+            idf.loc[n-1-i,'Shift'] = span-i-1
+        idf['List'] = idf.apply(lambda r:[r.name+i-r.Shift for i in range(span)],axis=1)
+        if n<= span:
+            idf['List'] = idf.apply(lambda r:list(range(n)),axis=1)
+        s = idf.List.apply(lambda l:pd.Interval(left=df.Interval.iloc[min(l)].left,right=df.Interval.iloc[max(l)].right,closed='left'))
+        return(s)
+    L = []
+    for sid in SW_DF.SID.unique():
+        idf = SW_DF[SW_DF.SID==sid]
+        idf.reset_index(drop=True,inplace=True)
+        idf['RollingInterval'] = idf.groupby('SID').apply(RollingIntervals).T[sid]
+        L.append(idf)
+    SW_DF = pd.concat(L)
+    SW_DF.sort_values(['RID','BMP'],inplace=True)
+    SW_DF.reset_index(drop=True,inplace=True)
+    SW_DF.loc[SW_DF.BMP<0,'BMP'] = 0
+    SW_DF.drop_duplicates(['RID','BMP','EMP'],inplace=True)
+    SW_DF.loc[(SW_DF.RID==SW_DF.RID.shift()) & (SW_DF.BMP<SW_DF.EMP.shift()),'BMP'] = SW_DF.EMP.shift()
+    SW_DF['Interval'] = SW_DF.apply(lambda r:pd.Interval(left=r.BMP,right=r.EMP,closed='left'),axis=1)
+    SW_DF['BMP'] = SW_DF.Interval.apply(lambda x:max([0,x.left]))
+    SW_DF['EMP'] = SW_DF.Interval.apply(lambda x:x.right)
+    SW_DF['Interval_SID'] = SW_DF.RID + '_' + SW_DF.BMP.apply(lambda x:'{:0.3f}'.format(x)) + '_' + SW_DF.EMP.apply(lambda x:'{:0.3f}'.format(x))
+    SW_DF['BMP'] = SW_DF.RollingInterval.apply(lambda x:max([0,x.left]))
+    SW_DF['EMP'] = SW_DF.RollingInterval.apply(lambda x:x.right)
+    SW_DF['Window_SID']   = SW_DF.RID + '_' + SW_DF.BMP.apply(lambda x:'{:0.3f}'.format(x)) + '_' + SW_DF.EMP.apply(lambda x:'{:0.3f}'.format(x))
+    
+    SW_DF = SW_DF[['RID','Interval_SID','Window_SID','Input_SID']+fields]
+    return(SW_DF)
+
+

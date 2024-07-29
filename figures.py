@@ -1,74 +1,9 @@
 import sys
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-
-class MidPointNorm(Normalize):    
-    from numpy import ma
-    from matplotlib import cbook
-    from matplotlib.colors import Normalize
-
-    def __init__(self, midpoint=0, vmin=None, vmax=None, clip=False):
-        Normalize.__init__(self,vmin, vmax, clip)
-        self.midpoint = midpoint
-
-    def __call__(self, value, clip=None):
-        if clip is None:
-            clip = self.clip
-
-        result, is_scalar = self.process_value(value)
-
-        self.autoscale_None(result)
-        vmin, vmax, midpoint = self.vmin, self.vmax, self.midpoint
-
-        if not (vmin < midpoint < vmax):
-            raise ValueError("midpoint must be between maxvalue and minvalue.")       
-        elif vmin == vmax:
-            result.fill(0) # Or should it be all masked? Or 0.5?
-        elif vmin > vmax:
-            raise ValueError("maxvalue must be bigger than minvalue")
-        else:
-            vmin = float(vmin)
-            vmax = float(vmax)
-            if clip:
-                mask = ma.getmask(result)
-                result = ma.array(np.clip(result.filled(vmax), vmin, vmax),
-                                  mask=mask)
-
-            # ma division is very slow; we can take a shortcut
-            resdat = result.data
-
-            #First scale to -1 to 1 range, than to from 0 to 1.
-            resdat -= midpoint            
-            resdat[resdat>0] /= abs(vmax - midpoint)            
-            resdat[resdat<0] /= abs(vmin - midpoint)
-
-            resdat /= 2.
-            resdat += 0.5
-            result = ma.array(resdat, mask=result.mask, copy=False)                
-
-        if is_scalar:
-            result = result[0]            
-        return result
-
-    def inverse(self, value):
-        if not self.scaled():
-            raise ValueError("Not invertible until scaled")
-        vmin, vmax, midpoint = self.vmin, self.vmax, self.midpoint
-
-        if cbook.iterable(value):
-            val = ma.asarray(value)
-            val = 2 * (val-0.5)  
-            val[val>0]  *= abs(vmax - midpoint)
-            val[val<0] *= abs(vmin - midpoint)
-            val += midpoint
-            return val
-        else:
-            val = 2 * (val - 0.5)
-            if val < 0: 
-                return  val*abs(vmin-midpoint) + midpoint
-            else:
-                return  val*abs(vmax-midpoint) + midpoint
+from datetime import datetime, timedelta
 
 def PlotPolylines(List,anotate = False):
     size = 25
@@ -142,3 +77,140 @@ def PairTable(DF,Rows,Cols,Percentage=False,Plot=False,figsize=(10,10)):
         plt.yticks(range(0,df.shape[0]),df.index,rotation=0)
         plt.show()
     return(df)
+
+#Crash Trends
+def TrendFigure(DataSeries,RollingSpan,ylab,title,fname):
+
+    F_Cond_B = mpl.font_manager.FontProperties(fname=r"\\chcfpp01\Groups\HTS\Code_Repository\Fonts\Roboto-BoldCondensed_0.ttf")
+    F_Cond_B1 = mpl.font_manager.FontProperties(fname=r"\\chcfpp01\Groups\HTS\Code_Repository\Fonts\Roboto-BoldCondensed_0.ttf",size=16)
+    S = DataSeries.rolling(RollingSpan).mean()
+    S.index = list(range(0,len(S)))
+    fs = (14,7)
+    ax = DataSeries.plot.bar(stacked=True,figsize=fs,color='#AA2D29',label=DataSeries.name) 
+    S.plot(label= '{} Year Rolling Average'.format(RollingSpan),ax=ax,marker='o',color='#003057',markersize=8)    
+    plt.ylim(0,DataSeries.max()*1.1)
+    plt.grid(True,linestyle='--', color='#7B868C')
+    plt.ylabel(ylab,fontproperties=F_Cond_B,size=18)
+    plt.xlabel('')
+    plt.gca().yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+    plt.legend()
+    plt.title(title,fontproperties=F_Cond_B,fontsize=16)
+    
+    #ax = plt.gca()
+    ax.set_axisbelow(True)
+    for l in ax.yaxis.get_ticklabels():
+        l.set_fontproperties(F_Cond_B)
+    ax.yaxis.set_tick_params(color='#414042', labelsize=16)
+    for l in ax.xaxis.get_ticklabels():
+        l.set_fontproperties(F_Cond_B)
+    ax.xaxis.set_tick_params(color='#414042', labelsize=16)
+    ax.grid(True,linestyle='--', color='#7B868C')
+    table2 = ax.table(cellText = [list(DataSeries.apply('{:,.0f}'.format))],
+                      rowLabels = [ylab],
+                         bbox=[0,-0.07,1,-0.05],
+                         rowLoc='right',colLoc='right',cellLoc='center',
+                         loc ='bottom')  
+    
+    for (row, col), cell in table2.get_celld().items():
+            cell.set_text_props(fontproperties=F_Cond_B1)
+    table2 = ax.table(cellText = [list(S.apply('{:,.0f}'.format).replace({'nan':'-'}))],
+                      rowLabels = ['{} Year Rolling Average'.format(RollingSpan)],
+                         bbox=[0,-0.12,1,-0.05],
+                         fontsize=16,rowLoc='right',colLoc='right',cellLoc='center',
+                         loc ='bottom')  
+    for (row, col), cell in table2.get_celld().items():
+            cell.set_text_props(fontproperties=F_Cond_B1)
+    plt.savefig(fname,dpi=1200,transparent=True,bbox_inches = 'tight',pad_inches = 0)
+    return(ax)
+
+def TimeTrend_Contour(S):
+    """
+    S is a pandas series with datetime index and the values are used to create the contour plots
+    """
+
+    F_Cond_B = mpl.font_manager.FontProperties(fname=r"C:\Local_Proj\CTDOT\TechMemo\Fonts\Roboto-BoldCondensed_0.ttf")
+    import warnings
+    warnings.filterwarnings('ignore')
+    TimeOrder = [datetime(2000,1,1,d,0).strftime('%I:%M %p') for d in list(range(6,24)) + list(range(0,6))]
+    TimeOrder.reverse()
+    DayOrder = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+    MonthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    DF  = S.reset_index()
+    DF.columns = ['DATE','VALUE']
+    DF['Time'] = DF.DATE.dt.hour.apply(lambda x:datetime(2000,1,1,x,0).strftime('%I:%M %p'))
+    DF['DayName'] = DF.DATE.dt.day_name()
+    DF['Month']  = DF.DATE.dt.month_name().apply(lambda x:x[:3])#[d.strftime('%b') for d in DF.Date]
+
+    df = DF.groupby(['Month','DayName','Time'])['VALUE'].sum().unstack([0,1])
+    df = df.reindex(TimeOrder)
+    df = df.T.reindex(pd.MultiIndex.from_product([MonthOrder,DayOrder])).T
+    df = df.fillna(0).astype(int)
+
+    sdate = datetime(DF.DATE.dt.year.min(), 1, 1)
+    edate = datetime(DF.DATE.dt.year.max()+1, 1, 1) - timedelta(days=1)
+
+    idx = pd.to_datetime(pd.Series([sdate + timedelta(days=i) for i in range((edate - sdate).days + 1)],name='DATE'))
+    df1 = pd.DataFrame(index=idx)
+    df1.reset_index(inplace=True)
+    df1['DayName'] = df1.DATE.dt.day_name()
+    df1['Month']   = df1.DATE.dt.month_name().apply(lambda x:x[:3])#[d.strftime('%b') for d in DF.Date]
+    df1 = df1.groupby(['Month','DayName']).size()
+    df1 = df1.loc[pd.MultiIndex.from_product([MonthOrder,DayOrder])]
+    df = df.T.div(df1,axis=0).T
+
+    ylabels = [datetime(2000,1,1,d,0).strftime('%I %p') for d in [6,8,10,12,14,16,18,20,22,0,2,4]]
+    ylabels.reverse()
+    yticks  = [1,3,5,7,9,11,13,15,17,19,21,23]
+
+    fig = plt.figure(figsize=(10, 6))#, facecolor='w', edgecolor='k')
+    ax1 = fig.add_subplot(2,1,1)
+
+    df1 = df[MonthOrder[0:6]]
+    pl1 = plt.contourf(df1, cmap=plt.cm.Reds,corner_mask=True ,alpha=1,v_min=df.min().min(),v_max = df.max().max())
+    xposition = [7*(i1)-0.5 for i1 in range(1,6)]
+    for xc in xposition:
+        plt.axvline(x=xc, color='k', linestyle='--')
+    xl = [{True:f[1][0:2] + '  ' + f[0],False:f[1][0:2]}[f[1][0:2]=='Th'] for f in df1.columns]
+    plt.xticks(range(len(list(df1))),xl,rotation=90,fontsize=8,fontproperties=F_Cond_B,color='#414042')
+    ax1.xaxis.tick_top()
+    #plt.yticks(range(1,len(df1.index)),list(df1.index)[1:],rotation=0,fontsize=6,fontproperties=F_Cond_B)
+    plt.yticks(yticks,ylabels,rotation=0,fontsize=10,color='#414042')
+    
+    for y in [5,17]:
+        ax1.axhline(y , linestyle='--', color='#7B868C') # horizontal lines
+    for x in [4,11,18,25,32,39]:
+        ax1.axvline(x, linestyle='--', color='#7B868C') # vertical lines
+    
+    #plt.grid()
+    df1 = df[MonthOrder[6:13]]
+
+    ax2 = fig.add_subplot(2,1,2)
+    pl2 = plt.contourf(df1, cmap=plt.cm.Reds,corner_mask=True ,alpha=1,v_min=df.min().min(),v_max = df.max().max())
+    for xc in xposition:
+        plt.axvline(x=xc, color='k', linestyle='--')
+    xl = [{True:f[0] + '  ' + f[1][0:2],False:f[1][0:2]}[f[1][0:2]=='Th'] for f in df1.columns]
+
+    plt.xticks(range(len(list(df1))),xl,rotation=90,fontsize=8,fontproperties=F_Cond_B,color='#414042')
+    #plt.yticks(range(len(df1.index)),df1.index,rotation=0,fontsize=6,fontproperties=F_Cond_B)
+    plt.yticks(yticks,ylabels,rotation=0,fontsize=10,color='#414042')
+
+    for y in [5,17]:
+        ax2.axhline(y , linestyle='--', color='#7B868C') # horizontal lines
+    for x in [4,11,18,25,32,39]:
+        ax2.axvline(x, linestyle='--', color='#7B868C') # vertical lines
+        
+    #plt.grid()
+    plt.subplots_adjust(wspace=0, hspace=0.04)
+    cb = fig.colorbar(pl1,ax=[ax1,ax2],pad=0.01)
+    
+    for l in cb.ax.yaxis.get_ticklabels():
+        l.set_fontproperties(F_Cond_B)
+    cb.ax.yaxis.set_tick_params(color='#414042')
+    cb.ax.get_yaxis().labelpad = 15
+    cb.ax.set_ylabel('Average Number of KA Injuries per Month-Weekday-Hour (2016-2020)', rotation=270,fontproperties=F_Cond_B,color='#414042')
+    params = {"text.color": '#414042',
+              "xtick.color": '#414042',
+              "ytick.color": '#414042'}
+    plt.rcParams.update(params)
+    return(fig)

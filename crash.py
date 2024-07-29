@@ -1,306 +1,8 @@
-# Developed By Mahdi Rajabi mrajabi@clemson.edu
-import os
-import sys
-#import hsmpy3.common as common
-#mport hsmpy3.fields as fields
-import datetime
-import copy
-import arcpy
-import subprocess 
-import time
+#from multiprocessing.sharedctypes import Value
 import pandas as pd
-from time import gmtime, strftime
-from datetime import timedelta
 import numpy as np
 from scipy import stats
 
-def secondary(CrashInput,TimeInt,Distance,Output):
-    print("Secondary Crashes")
-    SPJ = os.path.splitext(Output)[0] + '_SpatialJoin' + os.path.splitext(Output)[1]
-    arcpy.Delete_management(Output)
-    arcpy.Delete_management(SPJ)
-
-    print('Count: ' + os.path.basename(CrashInput))
-    C = arcpy.GetCount_management(CrashInput)
-    arcpy.AddMessage("     - Total Items Found: " + str(C))
-
-    def DateDecompose(Date,Time):
-            Date = str(Date)
-            D = 0
-            M = 0
-            Y = 0
-            if len(Date) == 7:
-                M = (Date[0])
-                D = (Date[1:3])
-                Y = (Date[3:7])
-            if len(Date) == 8:
-                M = (Date[0:2])
-                D = (Date[2:4])
-                Y = (Date[4:8])
-
-            h = 0
-            m = 0
-            Time = str(Time)
-            if len(Time) <= 2:
-                h = '0'
-                m = (Time)
-            if len(Time) == 3:
-                h = (Time[0])
-                m = (Time[1:3])
-            if len(Time) == 4:
-                h = (Time[0:2])
-                m = (Time[2:4])
-            
-            flag = False
-            try:
-                m = int(m)
-            except:
-                flag = True
-                m = 0
-            try:
-                h = int(h)
-            except:
-                flag = True
-                h = 0
-            try:
-                M = int(M)
-            except:
-                flag = True
-                M = 1
-            try:
-                D = int(D)
-            except:
-                flag = True
-                D = 1
-            try:
-                Y = int(Y)
-            except:
-                flag = True
-                Y = 2007
-            if m>59: flag = True;m = 59
-            if m<0 : flag = True;m = 0
-            if h>23: flag = True;h = 23;m = 59
-            if h<0 : flag = True;h = 0
-            if M>12: flag = True;M = 12
-            if M<0 : flag = True;M = 0
-            if D>31: flag = True;D = 31
-            if D<0 : flag = True;D = 0
-            try:
-                out = datetime.datetime(int(Y),int(M),int(D),int(h),int(m))
-            except:
-                falg = True
-                out = datetime.datetime(2007,1,1,0,0)
-            #if flag:
-            #    arcpy.AddWarning('     - Out of range date: ' + Date + ', ' + Time + ' => ' + str(out))
-
-            return(out)
-
-    print("Search Cursor: " + os.path.basename(CrashInput))
-    CDic = {SRow.getValue('ANO'):{'P'   :SRow.getValue('Shape'),
-                                  'Time':SRow.getValue(fields.loc.TIM['name']),
-                                  'Date':SRow.getValue(fields.loc.DAT['name']),
-                                  'RCT' :SRow.getValue(fields.loc.RCT['name']),
-                                  'RTN' :SRow.getValue(fields.loc.RTN['name']),
-                                  'DIR' :SRow.getValue(fields.loc.DLR['name'])} for SRow in arcpy.SearchCursor(CrashInput)}
-
-    print('Merge: ' + os.path.basename(CrashInput))
-    fm  = arcpy.FieldMap()
-    fms = arcpy.FieldMappings()
-    fm.addInputField(CrashInput,'ANO')
-    outF = fm.outputField
-    outF.name  = fields.loc.ANO['name']
-    outF.alias = fields.loc.ANO['alias']  
-    outF.type  = fields.loc.ANO['type']
-    fm.outputField = outF
-    fms.addFieldMap(fm)
-    arcpy.Merge_management(CrashInput,Output,fms)
-
-    print("Spatial Join: " + os.path.basename(Output))
-    arcpy.SpatialJoin_analysis(Output, Output, SPJ,"JOIN_ONE_TO_MANY","KEEP_ALL",'',"WITHIN_A_DISTANCE",str(Distance)+" Feet")
-    SortedANO = sorted(CDic.keys())
-    Pairs   = {ANO:[] for ANO in SortedANO}
-    for SRow in arcpy.SearchCursor(SPJ):
-        ANO1 = SRow.getValue("ANO")
-        ANO2 = SRow.getValue("ANO_1")
-        if ANO2>ANO1:
-            Pairs[ANO1].append(ANO2)
-    arcpy.Delete_management(SPJ)
-    
-    print("Finding Crash Pairs ...")
-    
-    FPair   = {ANO:-1 for ANO in SortedANO}
-    Primary = []
-    Secondary = []
-    Prg = 0.1
-    for ANO1 in SortedANO:
-        if float(SortedANO.index(ANO1))/float(str(C)) >= Prg:
-            print(" - " + str(int(Prg*100)) + "% Completed")
-            Prg = Prg + 0.1
-        for ANO2 in Pairs[ANO1]:
-            if CDic[ANO1]['RCT'] == CDic[ANO2]['RCT']:
-                if CDic[ANO1]['RTN'] == CDic[ANO2]['RTN']:
-                    D1 = DateDecompose(CDic[ANO1]['Date'],CDic[ANO1]['Time'])
-                    D2 = DateDecompose(CDic[ANO2]['Date'],CDic[ANO2]['Time'])
-                    if abs(D1-D2).total_seconds()/3600<=float(TimeInt):
-                        if (D2-D1).total_seconds() > 0 and not (ANO1 in Secondary):
-                            FPair[ANO2]=(ANO1)
-                            Primary.append(ANO1)
-                            Secondary.append(ANO2)
-                            #print(str(ANO1)+', ' + str(ANO2)+','+str(abs(D1-D2).total_seconds()/3600))
-                        if (D1-D2).total_seconds() > 0 and not (ANO2 in Secondary):
-                            FPair[ANO1]=(ANO2)
-                            Primary.append(ANO2)
-                            Secondary.append(ANO1)
-                                
-    print("Add Field: " + os.path.basename(Output))
-    for field in [fields.crash.PrmANO,fields.crash.Tempor,fields.crash.Spatio,fields.loc.Label]:
-        print(' - ' + field['name'])
-        arcpy.AddField_management(Output,field['name'],field['type'],field['precision'],field['scale'],field['length'],field['alias'],field['nullable'],field['required'])
-
-    print("Update Cursor: " + os.path.basename(Output))
-    i = 0
-    UC = arcpy.UpdateCursor(Output)
-    for URow in UC:
-        ANO = URow.getValue("ANO")
-        if ANO in Secondary:
-            URow.setValue(fields.crash.PrmANO['name'],FPair[ANO])
-            D1 = DateDecompose(CDic[ANO       ]['Date'],CDic[ANO       ]['Time'])
-            D2 = DateDecompose(CDic[FPair[ANO]]['Date'],CDic[FPair[ANO]]['Time'])
-            t = abs(D1-D2).total_seconds()/60
-            d = common.GetDistance(CDic[ANO]['P'],CDic[FPair[ANO]]['P'])
-            URow.setValue(fields.crash.Tempor['name'],t)
-            URow.setValue(fields.crash.Spatio['name'],d)
-            URow.setValue(fields.loc.Label   ['name'],'{:3.0f}{}{:4.0f}{}'.format(t,' Min, ',d,' Feet'))
-            UC.updateRow(URow)
-        else:
-            UC.deleteRow(URow)
-
-    print(" --> Done.")
-def FindSecondaryCrashes(CSV_In,ID_Col,Date_Col,RID_Col,MP_Col,CSV_Out):
-    global i
-    global j
-    def GroupbyDifference_hours(DF,GroupbyField,TargetField,Difference):
-        global i
-        df = DF[[GroupbyField, TargetField]].copy(deep=True)
-        df = df.sort_values([GroupbyField, TargetField])
-        idx1 = DF.index
-        idx2 = df.index
-        Arr = idx2.get_indexer(idx1)    
-        df.reset_index(drop=True,inplace=True)
-        df.index = pd.MultiIndex.from_arrays([df[GroupbyField], df[TargetField]])
-        df['Delta'] = df.groupby(GroupbyField)[TargetField].diff().fillna(timedelta(1)).apply(lambda x:x.days*24+x.seconds/3600.0).round(2)
-        df['Date_Diff'] = df.Delta.apply(lambda x:(x<=Difference)*1 if not pd.isnull(x) else 0)
-        df['Diff_Shifted'] = df.Date_Diff.shift(1).fillna(0).astype(int)
-        
-        def Block_D(DF):
-            global i
-            def Block_R(row):
-                global i
-                if row.Date_Diff==1: 
-                    if row.Diff_Shifted==0:
-                        i += 1
-                        return(i)
-                    else:
-                        return(i)
-                return(0)
-            s = DF.apply(Block_R,axis=1)
-            s.index = s.index.droplevel(0)
-            return(s)
-        df['block'] = df.groupby(GroupbyField).apply(Block_D)
-        df['block_Shifted'] = df.groupby(GroupbyField).block.shift(-1).fillna(0).astype(int)
-        def Block2_D(DF):
-            s = DF.apply(lambda row:max(row.block_Shifted,row.block),axis=1)
-            s.index = s.index.droplevel(0)
-            return(s)
-        s = df.groupby(GroupbyField).apply(Block2_D)
-        s = s.iloc[Arr]
-        s.index = DF.index
-        return(s)
-    def GroupbyDifference(DF,GroupbyField,TargetField,Difference):
-        global j
-        df = DF[[GroupbyField, TargetField]].copy(deep=True)
-        df = df.sort_values([GroupbyField, TargetField])
-        idx1 = DF.index
-        idx2 = df.index
-        Arr = idx2.get_indexer(idx1)    
-        df.reset_index(drop=True,inplace=True)
-        df.index = pd.MultiIndex.from_arrays([df[GroupbyField], df[TargetField]])
-        df['Delta'] = df.groupby(GroupbyField)[TargetField].diff().fillna(Difference*2)
-        df['Date_Diff'] = df.Delta.apply(lambda x:(x<=Difference)*1 if not pd.isnull(x) else 0)
-        df['Diff_Shifted'] = df.Date_Diff.shift(1).fillna(0).astype(int)
-        def Block_D(DF):
-            global j
-            def Block_R(row):
-                global j
-                if row.Date_Diff==1: 
-                    if row.Diff_Shifted==0:
-                        j += 1
-                        return(j)
-                    else:
-                        return(j)
-                return(0)
-            s = DF.apply(Block_R,axis=1)
-            s.index = s.index.droplevel(0)
-            return(s)
-        df['block'] = df.groupby(GroupbyField).apply(Block_D)
-        df['block_Shifted'] = df.groupby(GroupbyField).block.shift(-1).fillna(0).astype(int)
-        def Block2_D(DF):
-            s = DF.apply(lambda row:max(row.block_Shifted,row.block),axis=1)
-            s.index = s.index.droplevel(0)
-            return(s)
-        s = df.groupby(GroupbyField).apply(Block2_D)
-        s = s.iloc[Arr]
-        s.index = DF.index
-        return(s)
-    print('[{}] read and filter crash data'.format(strftime("%Y-%m-%d %H:%M:%S")))
-    Crash_DF = pd.read_csv(CSV_In,low_memory=False)
-    Crash_DF[Date_Col] = pd.to_datetime(Crash_DF[Date_Col])
-    Crash_DF[MP_Col] = Crash_DF[MP_Col].round(4)
-    Crash_DF = Crash_DF[(~pd.isnull(Crash_DF[RID_Col])) & (~pd.isnull(Crash_DF[MP_Col]))]
-    print('[{}]  - {}'.format(strftime("%Y-%m-%d %H:%M:%S"),Crash_DF.shape))
-
-    print('[{}] start iteration over {} rows'.format(strftime("%Y-%m-%d %H:%M:%S"),Crash_DF.shape[0]))
-    for iteration in range(1,10):
-        i = 0
-        j = 0
-        if iteration==1:
-            Crash_DF['Time_Blocks'] = GroupbyDifference_hours(Crash_DF,'INVENTORY','DATE',2).astype(int)
-        else:
-            Crash_DF['Time_Blocks'] = GroupbyDifference_hours(Crash_DF[Crash_DF.MP_Blocks>0],'MP_Blocks','DATE',2).astype(int)
-        Crash_DF['Time_Blocks'] = Crash_DF.Time_Blocks.fillna(0).astype(int)
-        print('[{}]  - iteration: {}, time blocks: {}, crashes: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),iteration,i,Crash_DF[Crash_DF.Time_Blocks>0].shape[0]))
-            
-        Crash_DF['MP_Blocks'] = GroupbyDifference(Crash_DF[Crash_DF.Time_Blocks>0],'Time_Blocks','MP',2)
-        Crash_DF['MP_Blocks'] = Crash_DF.MP_Blocks.fillna(0).astype(int)
-        print('[{}]  - iteration: {}, milepost blocks: {}, crashes: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),iteration,j,Crash_DF[Crash_DF.MP_Blocks>0].shape[0]))
-        if i==j:
-            break
-            print('[{}] converged, total blocks: {}, crashes: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),iteration,j,Crash_DF[Crash_DF.MP_Blocks>0].shape[0]))
-
-    print('[{}] adding primary/secondary fields'.format(strftime("%Y-%m-%d %H:%M:%S"),iteration,j,Crash_DF[Crash_DF.MP_Blocks>0].shape[0]))
-    Crash_DF['CrashChain'] = Crash_DF.Time_Blocks
-    Crash_DF = Crash_DF.drop(columns=['Time_Blocks','MP_Blocks'])
-
-    Crash_DF = Crash_DF.sort_values(['CrashChain','DATE'])
-    def IsSecondary(DF):
-        s = pd.Series(index=DF.index,data='S',name='Sec')
-        s.iloc[0]='P'
-        return(s)
-    S = Crash_DF[Crash_DF.CrashChain>0].groupby('CrashChain').CID.apply(IsSecondary)
-    Crash_DF.loc[Crash_DF.CrashChain>0,'PrimSec'] = S
-
-    def PrimaryCID(S):
-        s = pd.Series(index=S.index,data=S.iloc[0],name='PrmCID')
-        s.iloc[0]=0
-        return(s)
-    S = Crash_DF[Crash_DF.CrashChain>0].groupby('CrashChain')[ID_Col].apply(PrimaryCID)
-    S2 = pd.Series(index=Crash_DF.index,data=0)
-    S2.loc[S.index] = S
-    Crash_DF['PrimCID'] = S2
-
-    print('[{}] export results'.format(strftime("%Y-%m-%d %H:%M:%S")))
-    Crash_DF.to_csv(CSV_Out,index=False)
-    print('[{}] done!'.format(strftime("%Y-%m-%d %H:%M:%S")))
 class CrashTypeExceedance(object):
     """
     Object class to compute the probability of specific crash types exceeding 
@@ -462,9 +164,162 @@ class CrashTypeExceedance(object):
         # If variance is equal to zero, return a probability of zero
         elif self.variance == 0:
             p = 0
+        elif all_crashes == 0:
+            p = 0
         # Else, calculate the probability using the beta distribution survival function
         else:
             p = stats.beta.sf(self.mean_proportion, self.alpha + type_crashes, self.beta + all_crashes - type_crashes)
             if np.isnan(p):
                 raise ValueError("Invalid result!")
         return p
+
+class BinaryField(object):
+    def __init__(self, name, mask_expressions=[], cid_list=[],uid_list=[],pid_list=[]):
+        self.name = name
+        self.mask_expressions = mask_expressions
+        self.cid_list = cid_list
+        self.uid_list = uid_list
+        self.pid_list = pid_list
+class MaskExpression(object):
+    def __init__(self, mask, level='crash', logic='or', file='crash'):
+        self.mask = mask
+        self.level = level
+        self.logic = logic
+        self.file = file
+class CrashDataBinaries(object):
+    def __init__(self, csh, unt, per, cid='CID', uid='CID_UID', pid='CID_UID_PID'):
+        # Log data inputs
+        self.csh_source = csh
+        self.unt_source = unt
+        self.per_source = per
+        self.csh_len = csh.shape[0]
+        self.unt_len = unt.shape[0]
+        self.per_len = per.shape[0]
+        if len(set([self.csh_len,self.unt_len,self.per_len]))!=3:
+            raise ValueError('This tool is optimized to work only if the length of crash, unit, and person files differ')
+        # Log ID field names
+        self.cid = cid
+        self.uid = uid
+        self.pid = pid
+        # Initialize emphasis areas
+        self.file_selector = {self.csh_len:'crash',self.unt_len:'unit',self.per_len:'person'}
+        self.eas = []
+        self.ea_names = []
+        
+    def create_mask(self,m):
+        if 'mask' in m.keys():
+            if m['mask'].shape[0] in self.file_selector.keys():
+                file = self.file_selector[m['mask'].shape[0]]
+            else:
+                raise ValueError('mask length ({}) not matching any of files (crash:{}, unit:{}, person:{})'.format(m['mask'].shape[0],self.csh_len,self.unt_len,self.per_len))
+        else:
+            raise ValueError('No masks passed')
+        logic='or'
+        if 'logic' in m.keys():
+            if m['logic']=='and':
+                logic = 'and'
+        level = file
+        if 'level' in m.keys():
+            level = m['level']
+        return(MaskExpression(mask=m['mask'],logic=logic,file=file,level=level))
+    def map_ids(self,ids,from_id,to_id):
+        if from_id=='crash':
+            if to_id=='cid':
+                return(sorted(set(ids)))
+            if to_id=='uid':
+                mask = self.unt_source[self.cid].isin(ids)
+                return(sorted(set(self.unt_source[mask][self.uid])))
+            if to_id=='pid':
+                mask = self.per_source[self.cid].isin(ids)
+                return(sorted(set(self.per_source[mask][self.pid])))
+        if from_id=='vehicle':
+            if to_id=='cid':
+                mask = self.unt_source[self.uid].isin(ids)
+                return(sorted(set(self.unt_source[mask][self.cid])))
+            if to_id=='uid':
+                return(sorted(set(ids)))
+            if to_id=='pid':
+                mask = self.per_source[self.uid].isin(ids)
+                return(sorted(set(self.per_source[mask][self.pid])))
+        if from_id=='person':
+            if to_id=='cid':
+                mask = self.per_source[self.pid].isin(ids)
+                return(sorted(set(self.per_source[mask][self.cid])))
+            if to_id=='uid':
+                mask = self.per_source[self.pid].isin(ids)
+                return(sorted(set(self.per_source[mask][self.uid])))
+            if to_id=='pid':
+                return(sorted(set(ids)))
+    def ids_from_mask(self,mask_exp):
+        if mask_exp.level=='crash':
+            if mask_exp.file=='crash':
+                return(sorted(set(self.csh_source[mask_exp.mask][self.cid])))
+            if mask_exp.file=='unit':
+                return(sorted(set(self.unt_source[mask_exp.mask][self.cid])))
+            if mask_exp.file=='person':
+                return(sorted(set(self.per_source[mask_exp.mask][self.cid])))
+        if mask_exp.level=='vehicle':
+            if mask_exp.file=='crash':
+                cids = set(self.csh_source[mask_exp.mask][self.cid])
+                return(sorted(set(self.unt_source[self.unt_source[self.cid].isin(cids)][self.uid])))
+            if mask_exp.file=='unit':
+                return(sorted(set(self.unt_source[mask_exp.mask][self.uid])))
+            if mask_exp.file=='person':
+                return(set(self.per_source[mask_exp.mask][self.uid]))
+        if mask_exp.level=='person':
+            if mask_exp.file=='crash':
+                cids = set(self.csh_source[mask_exp.mask][self.cid])
+                return(sorted(set(self.per_source[self.per_source[self.cid].isin(cids)][self.pid])))
+            if mask_exp.file=='unit':
+                uids = set(self.unt_source[mask_exp.mask][self.uid])
+                return(sorted(set(self.per_source[self.per_source[self.uid].isin(uids)][self.pid])))
+            if mask_exp.file=='person':
+                return(sorted(set(self.per_source[mask_exp.mask][self.pid])))
+    def csh_flags(self, joined=True, positive=1, negative=0):
+        # Create flagging columns
+        cols = [self.csh_source[c] for c in list(self.csh_source) if not c in self.ea_names] if joined else [] 
+        for ea in self.eas:
+            mask = self.csh_source[self.cid].isin(ea.cid_list)
+            cols.append(mask.replace({True: positive, False: negative}).rename(ea.name))
+        return pd.concat(cols, axis=1)
+    def unt_flags(self, joined=True, positive=1, negative=0):
+        # Create flagging columns
+        cols = [self.unt_source[c] for c in list(self.unt_source) if not c in self.ea_names]
+        for ea in self.eas:
+            mask = self.unt_source[self.uid].isin(ea.uid_list)
+            cols.append(mask.replace({True: positive, False: negative}).rename(ea.name))
+        # Consolidate flagging columns
+        return pd.concat(cols, axis=1)
+    def per_flags(self, joined=True, positive=1, negative=0):
+        # Create flagging columns
+        cols = [self.per_source[c] for c in list(self.per_source) if not c in self.ea_names] 
+        for ea in self.eas:
+            mask = self.per_source[self.pid].isin(ea.pid_list)
+            cols.append(mask.replace({True: positive, False: negative}).rename(ea.name))
+        # Consolidate flagging columns
+        return pd.concat(cols, axis=1)
+    def define_new(self, masks, name):
+        if len(masks)==0:
+            return()
+        mask_expressions = [self.create_mask(m) for m in masks]
+        mask_exp0 = mask_expressions[0]
+        ids = self.ids_from_mask(mask_exp=mask_exp0)
+        cid_list = self.map_ids(ids=ids,from_id=mask_exp0.level,to_id='cid')
+        uid_list = self.map_ids(ids=ids,from_id=mask_exp0.level,to_id='uid')
+        pid_list = self.map_ids(ids=ids,from_id=mask_exp0.level,to_id='pid')
+        for mask_exp in mask_expressions[1:]:
+            ids = self.ids_from_mask(mask_exp=mask_exp)
+            cid_list1 = self.map_ids(ids=ids,from_id=mask_exp.level,to_id='cid')
+            uid_list1 = self.map_ids(ids=ids,from_id=mask_exp.level,to_id='uid')
+            pid_list1 = self.map_ids(ids=ids,from_id=mask_exp.level,to_id='pid')
+            if mask_exp.logic=='and':
+                cid_list = sorted(set(cid_list).intersection(set(cid_list1)))
+                uid_list = sorted(set(uid_list).intersection(set(uid_list1)))
+                pid_list = sorted(set(pid_list).intersection(set(pid_list1)))
+            if mask_exp.logic=='or':
+                cid_list = sorted(set(cid_list).union(set(cid_list1)))
+                uid_list = sorted(set(uid_list).union(set(uid_list1)))
+                pid_list = sorted(set(pid_list).union(set(pid_list1)))
+
+        self.eas.append(BinaryField(name=name,mask_expressions= mask_expressions,cid_list=cid_list,uid_list=uid_list,pid_list=pid_list))
+        self.ea_names.append(name)

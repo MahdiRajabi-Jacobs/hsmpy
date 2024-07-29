@@ -31,14 +31,48 @@ def ListFCinGDB(DB):
 def ListFCinMDB(DB):
     import pyodbc
     DRV = 'Microsoft Access Driver (*.mdb, *.accdb)'
-    con = pyodbc.connect('DRIVER={};DBQ={}'.format(DRV,MDB))
+    con = pyodbc.connect('DRIVER={};DBQ={}'.format(DRV,DB))
     cur = con.cursor()
     tables = list(cur.tables())    
     cur.close()
     con.close()
     tables = [t[2] for t in tables if t[3]=='TABLE']
     return(tables)
-
+def GDBtoDF(GDB):
+    ws = arcpy.env.workspace
+    arcpy.env.workspace = GDB
+    D = arcpy.ListDatasets()
+    L = ListFCinGDB(GDB)
+    for d in D:
+        l = ListFCinGDB(GDB + '\\' + d)
+        L.extend([d + '\\' + i for i in l])
+    df = pd.DataFrame(pd.Series(L,name='Name'))
+    df['Describe'] = df.Name.apply(lambda x:arcpy.Describe(GDB + '\\' + x))
+    df["Feature Type"] = df.Describe.apply(lambda x:x.featureType if hasattr(x,'featureType') else np.NaN)
+    df["Shape Type"] = df.Describe.apply(lambda x:x.shapeType if hasattr(x,'shapeType') else np.NaN)
+    df["Spatial Index"] = df.Describe.apply(lambda x:x.hasSpatialIndex if hasattr(x,'hasSpatialIndex') else np.NaN)
+    df["Spatial reference name"] = df.Describe.apply(lambda x:x.spatialReference.name if hasattr(x,'spatialReference') else np.NaN)
+    df["Dataset Type"] = df.Describe.apply(lambda x:x.datasetType if hasattr(x,'datasetType') else np.NaN)
+    df["Fields"] = df.Describe.apply(lambda x:[f.name for f in x.fields] if hasattr(x,'fields') else [])
+    def myfun(x):
+        try:
+            return(arcpy.GetCount_management(GDB + '\\' + x)[0])
+        except:
+            return(np.NaN)
+    df["Rows"] = df.Name.apply(myfun)
+    arcpy.env.workspace = ws
+    return(df)
+def GDBDomainstoDF(GDB):
+    domains = arcpy.da.ListDomains(GDB)
+    L = []
+    for domain in domains:
+        if domain.domainType == 'CodedValue':
+            coded_values = domain.codedValues
+            for val, desc in coded_values.items():
+                L.append(pd.Series({'Domain_Name':domain.name,'DomainType':'CodedValue','value':val,'Description':desc}))
+        elif domain.domainType == 'Range':
+            L.append(pd.Series({'Domain_Name':domain.name,'DomainType':'Range','Min':domain.range[0],'Max':domain.range[1]}))
+    return(pd.DataFrame(L))
 # GDB to Pandas
 def FCtoDF_cursor(FC,readGeometry = False,selectedFields=None):
     '''
@@ -301,6 +335,12 @@ def DFtoFC_numpy(Input_DF,XYFields,Output_FC,Spatial_reference):
 
     print('[{}] done: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),arcpy.GetCount_management(Output_FC)[0]))
 def DFtoFCorTable_cursor(DF,Table,Overwrite={},shape='',spatialReference='',Continue=False): # Incomplete
+    '''
+    DF: Pandas dataframe with Esri Shape to be plotted
+    Table: Output feature class filepath
+    shape: Name of the column in DF containing Esri Shape information
+    spatialReference: Spatial Reference for the Esri Shape
+    '''
     import arcpy
     def GetFieldTypes(DF,Overwrite={},shape=''):
         df = pd.DataFrame(columns=['Pandas_FieldName','Pandas_FieldType','Esri_FieldName','Esri_FieldType','Esri_FieldLength','Esri_Domain'])
@@ -360,12 +400,13 @@ def DFtoFCorTable_cursor(DF,Table,Overwrite={},shape='',spatialReference='',Cont
             SR = spatialReference
             if SR!='':
                 print('[{}] spatial reference passed: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),SR.name))
-            srL = DF[shape].loc[~pd.isnull(DF[shape])].apply(lambda pg:pg.spatialReference.factoryCode).unique().tolist()
+            shape_mask = ~pd.isnull(DF[shape])
+            srL = DF[shape_mask][shape].apply(lambda pg:pg.spatialReference.factoryCode).unique().tolist()
             if len(srL)==1:
                 if srL[0]!=0:
                     SR = arcpy.SpatialReference(srL[0])
                     print('[{}] spatial reference detected: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),SR.name))
-            st = DF[shape].loc[~pd.isnull(DF[shape])].apply(lambda x:x.type).unique()
+            st = DF[shape_mask][shape].apply(lambda x:x.type).unique()
             if len(st)==1:
                 #try:
                     if st[0] == 'polyline':
@@ -373,7 +414,7 @@ def DFtoFCorTable_cursor(DF,Table,Overwrite={},shape='',spatialReference='',Cont
                         import json
                         HasM = 'DISABLED'
                         HasZ = 'DISABLED'
-                        for pl in DF[shape].tolist():
+                        for pl in DF[shape_mask][shape].tolist():
                             if 'hasM' in json.loads(pl.JSON):
                                 if json.loads(pl.JSON)['hasM']:
                                     HasM = 'ENABLED' 
@@ -387,10 +428,21 @@ def DFtoFCorTable_cursor(DF,Table,Overwrite={},shape='',spatialReference='',Cont
                 #except:
                 #    pass
                 #try:
+                    if st[0] == 'polygon':
+                        print('[{}] geometry detected: POLYGON'.format(strftime("%Y-%m-%d %H:%M:%S")))
+                        AddShape = True
+                        arcpy.CreateFeatureclass_management(out_path=os.path.dirname(Table),out_name=os.path.basename(Table),geometry_type='POLYGON',spatial_reference=SR)
                     if st[0] == 'point':
                         print('[{}] geometry detected: POINT'.format(strftime("%Y-%m-%d %H:%M:%S")))
                         AddShape = True
                         arcpy.CreateFeatureclass_management(out_path=os.path.dirname(Table),out_name=os.path.basename(Table),geometry_type='POINT',spatial_reference=SR)
+                    if st[0] == 'multipoint':
+                        print('[{}] geometry detected: MULTI POINT'.format(strftime("%Y-%m-%d %H:%M:%S")))
+                        AddShape = True
+                        arcpy.CreateFeatureclass_management(out_path=os.path.dirname(Table),out_name=os.path.basename(Table),geometry_type='Multipoint',spatial_reference=SR)
+
+
+
                 #except:
                 #    pass
         print('[{}] adding fields: {}'.format(strftime("%Y-%m-%d %H:%M:%S"),DF.shape[1]))

@@ -166,8 +166,8 @@ class Domains(object):
     import datetime
     import psutil
     import os
-    import arcpy
-    from hsmpy31 import gdb
+    #import arcpy
+    #from hsmpy31 import gdb
 
     t_print = lambda x:print('\x1b[31m[{}]\x1b[39m {}'.format(strftime("%Y-%m-%d %H:%M:%S"),x))
     def __init__(self, path):
